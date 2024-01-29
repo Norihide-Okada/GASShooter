@@ -19,6 +19,9 @@ public:
 	class AGSCharacterBase* OwningCharacter;
 
 	UFUNCTION(BlueprintImplementableEvent, BlueprintCallable)
+	void InitializeWidget();
+
+	UFUNCTION(BlueprintImplementableEvent, BlueprintCallable)
 	void SetHealthPercentage(float HealthPercentage);
 
 	UFUNCTION(BlueprintImplementableEvent, BlueprintCallable)

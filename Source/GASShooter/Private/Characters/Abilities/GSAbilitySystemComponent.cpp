@@ -9,6 +9,7 @@
 #include "GSBlueprintFunctionLibrary.h"
 #include "Net/UnrealNetwork.h"
 #include "Weapons/GSWeapon.h"
+#include "GameplayAbilities/Public/AbilitySystemLog.h"
 
 static TAutoConsoleVariable<float> CVarReplayMontageErrorThreshold(
 	TEXT("GS.replay.MontageErrorThreshold"),
@@ -281,7 +282,7 @@ float UGSAbilitySystemComponent::PlayMontageForMesh(UGameplayAbility* InAnimatin
 		{
 			FGameplayAbilityLocalAnimMontageForMesh& AnimMontageInfo = GetLocalAnimMontageInfoForMesh(InMesh);
 
-			if (AnimMontageInfo.LocalMontageInfo.AnimatingAbility && AnimMontageInfo.LocalMontageInfo.AnimatingAbility != InAnimatingAbility)
+			if (AnimMontageInfo.LocalMontageInfo.AnimatingAbility.IsValid() && AnimMontageInfo.LocalMontageInfo.AnimatingAbility != InAnimatingAbility)
 			{
 				// The ability that was previously animating will have already gotten the 'interrupted' callback.
 				// It may be a good idea to make this a global policy and 'cancel' the ability.
@@ -299,8 +300,9 @@ float UGSAbilitySystemComponent::PlayMontageForMesh(UGameplayAbility* InAnimatin
 
 			AnimMontageInfo.LocalMontageInfo.AnimMontage = NewAnimMontage;
 			AnimMontageInfo.LocalMontageInfo.AnimatingAbility = InAnimatingAbility;
-			AnimMontageInfo.LocalMontageInfo.PlayBit = !AnimMontageInfo.LocalMontageInfo.PlayBit;
-			
+			//AnimMontageInfo.LocalMontageInfo.PlayBit = !AnimMontageInfo.LocalMontageInfo.PlayBit;
+			AnimMontageInfo.LocalMontageInfo.PlayInstanceId = AnimMontageInfo.LocalMontageInfo.PlayInstanceId;
+
 			if (InAbility)
 			{
 				InAbility->SetCurrentMontageForMesh(InMesh, NewAnimMontage);
@@ -320,7 +322,8 @@ float UGSAbilitySystemComponent::PlayMontageForMesh(UGameplayAbility* InAnimatin
 					// Those are static parameters, they are only set when the montage is played. They are not changed after that.
 					FGameplayAbilityRepAnimMontageForMesh& AbilityRepMontageInfo = GetGameplayAbilityRepAnimMontageForMesh(InMesh);
 					AbilityRepMontageInfo.RepMontageInfo.AnimMontage = NewAnimMontage;
-					AbilityRepMontageInfo.RepMontageInfo.ForcePlayBit = !bool(AbilityRepMontageInfo.RepMontageInfo.ForcePlayBit);
+					//AbilityRepMontageInfo.RepMontageInfo.ForcePlayBit = !bool(AbilityRepMontageInfo.RepMontageInfo.ForcePlayBit);
+					AbilityRepMontageInfo.RepMontageInfo.PlayInstanceId = AbilityRepMontageInfo.RepMontageInfo.PlayInstanceId;
 
 					// Update parameters that change during Montage life time.
 					AnimMontage_UpdateReplicatedDataForMesh(InMesh);
@@ -493,9 +496,9 @@ UGameplayAbility* UGSAbilitySystemComponent::GetAnimatingAbilityFromAnyMesh()
 	// Only one ability can be animating for all meshes
 	for (FGameplayAbilityLocalAnimMontageForMesh& GameplayAbilityLocalAnimMontageForMesh : LocalAnimMontageInfoForMeshes)
 	{
-		if (GameplayAbilityLocalAnimMontageForMesh.LocalMontageInfo.AnimatingAbility)
+		if (GameplayAbilityLocalAnimMontageForMesh.LocalMontageInfo.AnimatingAbility.IsValid())
 		{
-			return GameplayAbilityLocalAnimMontageForMesh.LocalMontageInfo.AnimatingAbility;
+			return GameplayAbilityLocalAnimMontageForMesh.LocalMontageInfo.AnimatingAbility.Get();
 		}
 	}
 
@@ -585,12 +588,12 @@ float UGSAbilitySystemComponent::GetCurrentMontageSectionLengthForMesh(USkeletal
 			// Otherwise we are the last section, so take delta with Montage total time.
 			else
 			{
-				return (CurrentAnimMontage->SequenceLength - CompositeSections[CurrentSectionID].GetTime());
+				return (CurrentAnimMontage->GetPlayLength() - CompositeSections[CurrentSectionID].GetTime());
 			}
 		}
 
 		// if we have no sections, just return total length of Montage.
-		return CurrentAnimMontage->SequenceLength;
+		return CurrentAnimMontage->GetPlayLength();
 	}
 
 	return 0.f;
@@ -722,7 +725,8 @@ void UGSAbilitySystemComponent::AnimMontage_UpdateForcedPlayFlagsForMesh(FGamepl
 {
 	FGameplayAbilityLocalAnimMontageForMesh& AnimMontageInfo = GetLocalAnimMontageInfoForMesh(OutRepAnimMontageInfo.Mesh);
 
-	OutRepAnimMontageInfo.RepMontageInfo.ForcePlayBit = AnimMontageInfo.LocalMontageInfo.PlayBit;
+	//OutRepAnimMontageInfo.RepMontageInfo.ForcePlayBit = AnimMontageInfo.LocalMontageInfo.PlayBit;
+	OutRepAnimMontageInfo.RepMontageInfo.PlayInstanceId = AnimMontageInfo.LocalMontageInfo.PlayInstanceId;
 }
 
 void UGSAbilitySystemComponent::OnRep_ReplicatedAnimMontageForMesh()
@@ -766,7 +770,8 @@ void UGSAbilitySystemComponent::OnRep_ReplicatedAnimMontageForMesh()
 					NewRepMontageInfoForMesh.RepMontageInfo.BlendTime,
 					NewRepMontageInfoForMesh.RepMontageInfo.NextSectionID,
 					NewRepMontageInfoForMesh.RepMontageInfo.IsStopped,
-					NewRepMontageInfoForMesh.RepMontageInfo.ForcePlayBit);
+					//NewRepMontageInfoForMesh.RepMontageInfo.ForcePlayBit);
+					NewRepMontageInfoForMesh.RepMontageInfo.PlayInstanceId);
 				ABILITY_LOG(Warning, TEXT("\tLocalAnimMontageInfo.AnimMontage: %s\n\tPosition: %f"),
 					*GetNameSafe(AnimMontageInfo.LocalMontageInfo.AnimMontage), AnimInstance->Montage_GetPosition(AnimMontageInfo.LocalMontageInfo.AnimMontage));
 			}
@@ -774,10 +779,13 @@ void UGSAbilitySystemComponent::OnRep_ReplicatedAnimMontageForMesh()
 			if (NewRepMontageInfoForMesh.RepMontageInfo.AnimMontage)
 			{
 				// New Montage to play
-				const bool ReplicatedPlayBit = bool(NewRepMontageInfoForMesh.RepMontageInfo.ForcePlayBit);
-				if ((AnimMontageInfo.LocalMontageInfo.AnimMontage != NewRepMontageInfoForMesh.RepMontageInfo.AnimMontage) || (AnimMontageInfo.LocalMontageInfo.PlayBit != ReplicatedPlayBit))
+				//const bool ReplicatedPlayBit = bool(NewRepMontageInfoForMesh.RepMontageInfo.ForcePlayBit);
+				const uint8 ReplicatedPlayBit = NewRepMontageInfoForMesh.RepMontageInfo.PlayInstanceId;
+				//if ((AnimMontageInfo.LocalMontageInfo.AnimMontage != NewRepMontageInfoForMesh.RepMontageInfo.AnimMontage) || (AnimMontageInfo.LocalMontageInfo.PlayBit != ReplicatedPlayBit))
+				if ((AnimMontageInfo.LocalMontageInfo.AnimMontage != NewRepMontageInfoForMesh.RepMontageInfo.AnimMontage) || (AnimMontageInfo.LocalMontageInfo.PlayInstanceId != ReplicatedPlayBit))
 				{
-					AnimMontageInfo.LocalMontageInfo.PlayBit = ReplicatedPlayBit;
+					//AnimMontageInfo.LocalMontageInfo.PlayBit = ReplicatedPlayBit;
+					AnimMontageInfo.LocalMontageInfo.PlayInstanceId = ReplicatedPlayBit;
 					PlayMontageSimulatedForMesh(NewRepMontageInfoForMesh.Mesh, NewRepMontageInfoForMesh.RepMontageInfo.AnimMontage, NewRepMontageInfoForMesh.RepMontageInfo.PlayRate);
 				}
 

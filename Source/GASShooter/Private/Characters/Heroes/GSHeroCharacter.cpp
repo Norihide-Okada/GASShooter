@@ -813,11 +813,13 @@ void AGSHeroCharacter::InitializeFloatingStatusBar()
 			{
 				UIFloatingStatusBarComponent->SetWidget(UIFloatingStatusBar);
 
+				UIFloatingStatusBar->OwningCharacter = this;
+				UIFloatingStatusBar->InitializeWidget();
+
 				// Setup the floating status bar
 				UIFloatingStatusBar->SetHealthPercentage(GetHealth() / GetMaxHealth());
 				UIFloatingStatusBar->SetManaPercentage(GetMana() / GetMaxMana());
 				UIFloatingStatusBar->SetShieldPercentage(GetShield() / GetMaxShield());
-				UIFloatingStatusBar->OwningCharacter = this;
 				UIFloatingStatusBar->SetCharacterName(CharacterName);
 			}
 		}
